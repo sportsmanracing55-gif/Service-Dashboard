@@ -1,0 +1,203 @@
+<!DOCTYPE html>
+<html lang="en-GB">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Mazda Service Dashboard</title>
+  <meta name="description" content="Service department leaderboard: labour gross, commission, MSI, BG product sales, repair order counts and upsell rates.">
+  <link rel="icon" href="assets/favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="css/styles.css">
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <img class="brand__logo" src="assets/mazda-logo.svg" alt="Mazda">
+      <div class="brand__titles">
+        <h1 class="brand__title">Service Dashboard</h1>
+        <p class="brand__subtitle" id="dealerName">Service Department</p>
+      </div>
+    </div>
+    <div class="topbar__controls">
+      <label class="field field--inline">
+        <span class="field__label">Month</span>
+        <input type="month" id="monthPicker">
+      </label>
+      <button class="btn btn--primary" id="btnPaste" type="button">Paste data</button>
+      <button class="btn" id="btnSettings" type="button">Settings</button>
+      <button class="btn btn--icon" id="btnTheme" type="button" title="Toggle light / dark" aria-label="Toggle light or dark theme">◐</button>
+      <button class="btn btn--icon" id="btnFullscreen" type="button" title="Display mode (full screen)" aria-label="Full screen display mode">⛶</button>
+    </div>
+  </header>
+
+  <main class="page">
+    <section class="section" aria-labelledby="deptHeading">
+      <div class="section__head">
+        <h2 id="deptHeading" class="section__title">Department</h2>
+        <p class="section__meta" id="deptMeta"></p>
+      </div>
+      <div class="tiles" id="deptTiles"></div>
+    </section>
+
+    <section class="section" aria-labelledby="roHeading">
+      <div class="section__head">
+        <h2 id="roHeading" class="section__title">Daily repair orders</h2>
+        <p class="section__meta">Target 70+ per day <span class="legend"><span class="legend__item"><span class="swatch swatch--good"></span>70+</span><span class="legend__item"><span class="swatch swatch--warn"></span>60–69</span><span class="legend__item"><span class="swatch swatch--bad"></span>Below 60</span></span></p>
+      </div>
+      <div class="card">
+        <div class="chart" id="roChart"></div>
+      </div>
+    </section>
+
+    <section class="section" aria-labelledby="advHeading">
+      <div class="section__head">
+        <h2 id="advHeading" class="section__title">Service advisor leaderboard</h2>
+        <p class="section__meta" id="advMeta"></p>
+      </div>
+      <div class="card card--table">
+        <div class="table-wrap">
+          <table class="board" id="board">
+            <thead>
+              <tr>
+                <th scope="col" class="num">#</th>
+                <th scope="col" data-sort="name">Service advisor</th>
+                <th scope="col" class="num" data-sort="labourGross">Labour gross</th>
+                <th scope="col" class="num" data-sort="commission">Commission<sup>*</sup></th>
+                <th scope="col" class="num" data-sort="msi">MSI score</th>
+                <th scope="col" class="num" data-sort="surveys">Surveys</th>
+                <th scope="col" class="num" data-sort="tyres">Tyres</th>
+                <th scope="col" class="num" data-sort="bgOilFuel" title="BG Engine Oil &amp; Fuel Treatment">BG oil + fuel</th>
+                <th scope="col" class="num" data-sort="bgFlush" title="BG Engine Oil Flush, Engine Oil Treatment &amp; Fuel Treatment">BG flush trio</th>
+                <th scope="col" class="num" data-sort="acSan" title="Air Conditioning Sanitisation">A/C sanitise</th>
+                <th scope="col" class="num" data-sort="dailyRO">Daily ROs</th>
+                <th scope="col" class="num" data-sort="redPct">Red sold</th>
+                <th scope="col" class="num" data-sort="amberPct">Amber sold</th>
+              </tr>
+            </thead>
+            <tbody id="boardBody"></tbody>
+          </table>
+        </div>
+        <p class="footnote" id="commissionNote"></p>
+      </div>
+    </section>
+
+    <section class="section section--empty" id="emptyState" hidden>
+      <div class="card card--empty">
+        <h2>No data yet</h2>
+        <p>Copy the advisor table from your spreadsheet or DMS report and paste it in. Nothing leaves this browser.</p>
+        <div class="btn-row">
+          <button class="btn btn--primary" type="button" data-open-paste>Paste data</button>
+          <button class="btn" type="button" id="btnSample">Load sample data</button>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <footer class="foot">
+    <span id="lastUpdated"></span>
+    <span class="foot__actions">
+      <button class="btn btn--link" type="button" id="btnExport">Export JSON</button>
+      <label class="btn btn--link" for="importFile">Import JSON</label>
+      <input type="file" id="importFile" accept="application/json" hidden>
+      <button class="btn btn--link btn--danger" type="button" id="btnClear">Clear all data</button>
+    </span>
+  </footer>
+
+  <!-- Paste dialog -->
+  <dialog class="dialog" id="pasteDialog" aria-labelledby="pasteTitle">
+    <form method="dialog" class="dialog__form">
+      <header class="dialog__head">
+        <h2 id="pasteTitle">Paste data</h2>
+        <button class="btn btn--icon" type="submit" value="cancel" aria-label="Close">✕</button>
+      </header>
+      <div class="tabs" role="tablist">
+        <button class="tab is-active" type="button" role="tab" data-tab="advisors" aria-selected="true">Advisors (monthly)</button>
+        <button class="tab" type="button" role="tab" data-tab="daily" aria-selected="false">Daily repair orders</button>
+        <button class="tab" type="button" role="tab" data-tab="department" aria-selected="false">Department</button>
+      </div>
+
+      <div class="tabpanel" data-panel="advisors" role="tabpanel">
+        <p class="help">One row per advisor, with a header row. Copy straight from Excel or Google Sheets. Column names are matched loosely, so <em>Labour Gross</em>, <em>Lab Gross Sales</em> and <em>Gross</em> all work. Unrecognised columns are ignored.</p>
+        <div class="btn-row">
+          <button class="btn btn--small" type="button" data-copy-template="advisors">Copy template header</button>
+          <button class="btn btn--small" type="button" data-load-sample="advisors">Fill with sample</button>
+        </div>
+        <textarea id="pasteAdvisors" rows="10" spellcheck="false" placeholder="Advisor	Labour Gross	Labour GP	MSI Score	Surveys	Tyres	BG Oil & Fuel	BG Flush Trio	A/C Sanitise	RO Count	Red %	Amber %"></textarea>
+      </div>
+
+      <div class="tabpanel" data-panel="daily" role="tabpanel" hidden>
+        <p class="help">Either <strong>wide</strong> (Date, then one column per advisor, optional Total) or <strong>long</strong> (Date, Advisor, Count). Dates can be 01/09/2026, 2026-09-01 or 1 Sep. Pasting replaces any existing rows for the same dates.</p>
+        <div class="btn-row">
+          <button class="btn btn--small" type="button" data-copy-template="daily">Copy template header</button>
+          <button class="btn btn--small" type="button" data-load-sample="daily">Fill with sample</button>
+        </div>
+        <textarea id="pasteDaily" rows="10" spellcheck="false" placeholder="Date	Sam Carter	Priya Shah	Total"></textarea>
+      </div>
+
+      <div class="tabpanel" data-panel="department" role="tabpanel" hidden>
+        <p class="help">Optional overrides for department figures. Leave a value blank to use the total calculated from the advisor table. Paste as <strong>Label&nbsp;→&nbsp;Value</strong> lines, or a two-row header/value table.</p>
+        <div class="btn-row">
+          <button class="btn btn--small" type="button" data-copy-template="department">Copy template</button>
+          <button class="btn btn--small" type="button" data-load-sample="department">Fill with sample</button>
+        </div>
+        <textarea id="pasteDepartment" rows="10" spellcheck="false" placeholder="Labour Gross	68,420
+MSI Score	94.6
+Survey Returns	58
+Tyre Sales	112
+Tyre %	18.5
+Wheel Alignments	47
+Daily ROs	72"></textarea>
+      </div>
+
+      <div class="preview" id="pastePreview" hidden></div>
+
+      <footer class="dialog__foot">
+        <span class="dialog__status" id="pasteStatus"></span>
+        <div class="btn-row">
+          <button class="btn" type="button" id="btnPreview">Preview</button>
+          <button class="btn btn--primary" type="button" id="btnApply">Apply to dashboard</button>
+        </div>
+      </footer>
+    </form>
+  </dialog>
+
+  <!-- Settings dialog -->
+  <dialog class="dialog dialog--narrow" id="settingsDialog" aria-labelledby="settingsTitle">
+    <form method="dialog" class="dialog__form" id="settingsForm">
+      <header class="dialog__head">
+        <h2 id="settingsTitle">Settings</h2>
+        <button class="btn btn--icon" type="submit" value="cancel" aria-label="Close">✕</button>
+      </header>
+      <div class="settings-grid">
+        <label class="field"><span class="field__label">Dealership name</span><input type="text" name="dealerName" maxlength="60"></label>
+        <label class="field"><span class="field__label">Currency symbol</span><input type="text" name="currency" maxlength="3"></label>
+
+        <h3 class="settings-grid__heading">Commission</h3>
+        <label class="field"><span class="field__label">Commission rate (% of labour gross profit)</span><input type="number" name="commissionRate" step="0.1" min="0" max="100"></label>
+        <label class="field"><span class="field__label">MSI bonus when green</span><input type="number" name="msiBonus" step="1" min="0"></label>
+        <label class="field"><span class="field__label">MSI deduction when red</span><input type="number" name="msiDeduction" step="1" min="0"></label>
+
+        <h3 class="settings-grid__heading">MSI thresholds</h3>
+        <label class="field"><span class="field__label">Green from</span><input type="number" name="msiGreen" step="0.01" min="0" max="100"></label>
+        <label class="field"><span class="field__label">Yellow from</span><input type="number" name="msiAmber" step="0.01" min="0" max="100"></label>
+
+        <h3 class="settings-grid__heading">Daily repair order thresholds (department)</h3>
+        <label class="field"><span class="field__label">Green from</span><input type="number" name="roGreen" step="1" min="0"></label>
+        <label class="field"><span class="field__label">Yellow from</span><input type="number" name="roAmber" step="1" min="0"></label>
+
+        <h3 class="settings-grid__heading">Surveys</h3>
+        <label class="field"><span class="field__label">Surveys per working day (Mon–Fri) per advisor</span><input type="number" name="surveysPerDay" step="1" min="0"></label>
+      </div>
+      <footer class="dialog__foot">
+        <span></span>
+        <div class="btn-row">
+          <button class="btn" type="button" id="btnSettingsReset">Reset defaults</button>
+          <button class="btn btn--primary" type="submit" value="save">Save</button>
+        </div>
+      </footer>
+    </form>
+  </dialog>
+
+  <script src="js/parse.js"></script>
+  <script src="js/app.js"></script>
+</body>
+</html>
