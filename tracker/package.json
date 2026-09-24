@@ -1,0 +1,13 @@
+{
+  "name": "preston-mazda-enquiry-tracker",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Preston Mazda customer enquiry tracker – self-hosted, no external services.",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "test": "node --test test/mail.test.js test/smoke.test.js"
+  },
+  "engines": { "node": ">=18" },
+  "license": "UNLICENSED"
+}

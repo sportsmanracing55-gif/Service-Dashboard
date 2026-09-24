@@ -9,6 +9,15 @@ No build step, no server, no accounts. It is a single static page: open
 `index.html` in a browser (or host the folder on GitHub Pages / the intranet)
 and everything is stored in that browser's local storage.
 
+## Customer enquiry tracker
+
+The `tracker/` folder holds a separate, self-hosted **Preston Mazda Customer
+Enquiry Tracker**: sign-in with work email and manager approval, live shared
+enquiry board, allocation to service advisors and the parts department with
+per-department done boxes, PDF parts quotes, interaction notes, and email +
+pop-up alerts. It shares this dashboard's stylesheet and brand assets. See
+[`tracker/README.md`](tracker/README.md) for setup.
+
 ## What it shows
 
 **Department**

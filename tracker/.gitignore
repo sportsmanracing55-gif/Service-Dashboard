@@ -1,0 +1,5 @@
+# Live data – never commit customer information
+data/
+config.json
+*.log
+node_modules/
