@@ -32,47 +32,52 @@ above (they share one stylesheet), with the dealership shown as **Preston Mazda*
 
 ## Setting it up (once)
 
-1. **Pick the machine** that will run the tracker – a PC or small server that is
+1. **Pick the machine** that will run the log – a PC or small server that is
    on all day and on the dealership network (e.g. the service office PC).
-2. **Install Node.js** (LTS version, 18 or newer) from https://nodejs.org on
-   that machine. Nothing else is needed – the tracker has no other
-   dependencies and needs no `npm install`.
-3. **Copy this folder** (`tracker`) and the dashboard folders next to it
-   (`assets`, `css`) onto the machine – simplest is to copy the whole
-   `Service-Dashboard` folder.
+2. **Unzip the download** somewhere permanent, e.g. `C:\PrestonMazda`. The
+   download includes a `node` folder holding a portable copy of Node.js
+   (the program that runs the server), so **nothing needs installing** and no
+   administrator rights are needed. If you obtained these files from GitHub
+   instead of the zip, either install Node.js LTS (18 or newer) from
+   https://nodejs.org, or download the "Windows Binary (.zip)" from the same
+   page and unzip it as a folder called `node` next to the `tracker` folder.
+3. **Keep the folders together**: `tracker`, `assets`, `css` and `node` sit
+   side by side. The log reads its fonts and colours from `assets` and `css`.
 4. **Create the config file**: copy `tracker/config.example.json` to
-   `tracker/config.json` and edit it:
+   `tracker/config.json` and edit it in Notepad:
    - `APP_URL` – the address staff will use, e.g. `http://SERVICE-PC:8080`.
      This is what goes in the emailed links.
+   - `DATA_KEY` – a long passphrase to encrypt the data folder at rest
+     (recommended). Keep a copy somewhere safe: without it the data cannot
+     be read. Set it before the first run.
    - `SMTP_*` and `MAIL_FROM` – your mail server details so alerts can be
      sent (see *Email* below). Until this is filled in, alerts are written to
      `tracker/data/outbox.log` instead of being sent.
-   - `DATA_KEY` – a long passphrase to encrypt the data folder at rest
-     (recommended). Keep a copy somewhere safe: without it the data cannot
-     be read. Set it before the first run; changing it later requires
-     re-encrypting the folder.
    - The approver, parts and advisor addresses are already set to
      `steves@`, `parts@` and `advisors@maxkirwan.com.au`. Change them here if
      they ever change.
-5. **Start it**: double-click `tracker/start-tracker.cmd` (Windows) or run
-   `node tracker/server.js`. The window shows the address it is listening on.
-6. **Create the first administrator**: open the tracker in a browser and
-   *Request an account* using **steves@maxkirwan.com.au**. That address is
-   approved automatically and becomes the administrator. Everyone else who
-   registers waits for approval under *Users & approvals* (top-right menu).
-7. **Open the firewall** on that machine for the port (8080 by default) so
-   other PCs on the network can reach it, and give staff the `APP_URL` link.
+5. **Start it**: double-click `Start Enquiry Log.cmd` (or
+   `tracker\start-tracker.cmd`). The window shows the address it is
+   listening on; leave it open. If Windows Firewall asks about Node.js,
+   click *Allow*.
+6. **Create the first administrator**: open the log in a browser at
+   `http://localhost:8080` and *Request an account* using
+   **steves@maxkirwan.com.au**. That address is approved automatically and
+   becomes the administrator. Everyone else who registers waits for approval
+   under *Users & approvals* (top-right menu), or you can add them there.
+7. **Other PCs** on the network open the `APP_URL` address in their browser.
 
 ### Keeping it running
 
 Make the tracker start automatically with Windows so the board is always up:
 
 - **Task Scheduler** (built in): create a task that runs
-  `node.exe C:\path\to\Service-Dashboard\tracker\server.js`
+  `C:\PrestonMazda\node\node.exe` with the argument `server.js`,
   *At startup*, with *Start in* set to the `tracker` folder and
-  *Run whether user is logged on or not*.
+  *Run whether user is logged on or not*. (Use `C:\Program Files\nodejs\node.exe`
+  instead if you installed Node.js rather than using the bundled folder.)
 - or **NSSM** (https://nssm.cc) to install it as a Windows service:
-  `nssm install PrestonMazdaTracker "C:\Program Files\nodejs\node.exe" server.js`
+  `nssm install PrestonMazdaTracker C:\PrestonMazda\node\node.exe server.js`
   with the *Startup directory* set to the `tracker` folder.
 
 On Linux use a `systemd` service with `ExecStart=/usr/bin/node /opt/Service-Dashboard/tracker/server.js`.
