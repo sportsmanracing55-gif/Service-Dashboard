@@ -16,6 +16,7 @@ INK2, INK3, LINE, SURFACE2 = "4B4F55", "7A7F86", "E2E3E5", "F8F8F8"
 GOOD, GOOD_BG, WARN, WARN_BG, INPUT_BG = "1F7A3A", "E3F3E8", "8A5B00", "FFF2C2", "FFFFCC"
 
 ROWS = 200                          # data rows in the table (4..203)
+STAFF_LAST = 33                     # last row of the Staff tables
 FIRST, LAST = 4, 3 + ROWS
 
 def fill(hex_): return PatternFill("solid", start_color=hex_, end_color=hex_)
@@ -36,21 +37,20 @@ COLS = [  # header, width, group
     ("Ref", 9, ""), ("Date Logged", 12, ""), ("Logged By", 14, ""),
     ("Customer Name", 22, "CUSTOMER"), ("Registration", 12, "CUSTOMER"), ("Contact Number", 15, "CUSTOMER"),
     ("Email Address", 26, "CUSTOMER"), ("Preferred Method", 13, "CUSTOMER"), ("Enquiry", 40, "CUSTOMER"),
-    ("Quote File", 24, "PARTS QUOTE (PDF)"), ("Quote Link", 13, "PARTS QUOTE (PDF)"),
+    ("Quote (PDF)", 20, "PARTS QUOTE"),
     ("Notes", 44, "NOTES"), ("Spoke To Customer", 17, "NOTES"),
     ("Service Advisor", 17, "SERVICE ADVISOR"), ("Contact Customer", 12, "SERVICE ADVISOR"), ("Advisor Done", 11, "SERVICE ADVISOR"),
     ("Parts Person", 17, "PARTS DEPARTMENT"), ("Quote Required", 12, "PARTS DEPARTMENT"), ("Parts Done", 11, "PARTS DEPARTMENT"),
     ("Status", 11, ""),
-    ("Parts Alert Sent", 17, "ALERTS – FILLED IN AUTOMATICALLY"), ("Contact Alert Sent", 17, "ALERTS – FILLED IN AUTOMATICALLY"),
-    ("Advisor Alerted", 17, "ALERTS – FILLED IN AUTOMATICALLY"), ("Parts Person Alerted", 17, "ALERTS – FILLED IN AUTOMATICALLY"),
-    ("Parts Done Alert Sent", 17, "ALERTS – FILLED IN AUTOMATICALLY"),
+    ("Email Parts", 16, "EMAIL ALERTS – ONE CLICK, THEN PRESS SEND"), ("Email Advisors", 16, "EMAIL ALERTS – ONE CLICK, THEN PRESS SEND"),
+    ("Email the Advisor", 18, "EMAIL ALERTS – ONE CLICK, THEN PRESS SEND"), ("Email the Parts Person", 20, "EMAIL ALERTS – ONE CLICK, THEN PRESS SEND"),
 ]
 NCOL = len(COLS)
 LASTCOL = get_column_letter(NCOL)
 col = {h: get_column_letter(i + 1) for i, (h, _, _) in enumerate(COLS)}
 
 # Row 1 – title bar (dashboard top bar: black with red rule)
-ws.merge_cells(f"A1:{LASTCOL}1")
+ws.merge_cells("A1:I1")
 ws["A1"] = "PRESTON MAZDA   ·   Customer Enquiry Log"
 ws["A1"].font = font(16, True, "FFFFFF"); ws["A1"].fill = fill(MZ_BLACK)
 ws["A1"].alignment = Alignment(vertical="center", indent=1)
@@ -58,6 +58,9 @@ ws.row_dimensions[1].height = 34
 for c in range(1, NCOL + 1):
     cell = ws.cell(row=1, column=c); cell.fill = fill(MZ_BLACK)
     cell.border = Border(bottom=Side(style="thick", color=MZ_RED))
+ws["J1"] = '=HYPERLINK(Settings!$B$7,"Open the quotes folder  ↗")'
+ws["J1"].font = font(11, True, "FFFFFF"); ws["J1"].alignment = Alignment(vertical="center")
+ws.merge_cells("J1:L1")
 
 # Row 2 – column groups
 ws.row_dimensions[2].height = 18
@@ -87,28 +90,50 @@ ws.row_dimensions[3].height = 30
 # Data rows: formulas + formats
 for r in range(FIRST, LAST + 1):
     ws[f"{col['Ref']}{r}"] = f'=IF({col["Customer Name"]}{r}="","","E-"&TEXT(ROW()-3,"0000"))'
-    ws[f"{col['Quote Link']}{r}"] = f'=IF({col["Quote File"]}{r}="","",HYPERLINK(Settings!$B$7&{col["Quote File"]}{r},"Open quote"))'
+    # Quote link: the PDF is simply saved as "<Ref>.pdf" in the quotes folder – nothing to type in the sheet.
+    ws[f"{col['Quote (PDF)']}{r}"] = f'=IF({col["Customer Name"]}{r}="","",HYPERLINK(Settings!$B$7&{col["Ref"]}{r}&".pdf","Open "&{col["Ref"]}{r}&".pdf"))'
+    # One-click email alerts: a mailto: link with the subject and body already written. Click, check, press Send.
+    def enc(expr):  # URL-encode the characters that matter in a mailto link
+        return f'SUBSTITUTE(SUBSTITUTE(SUBSTITUTE(SUBSTITUTE(SUBSTITUTE({expr},"%","%25"),"&","%26")," ","%20"),"#","%23"),CHAR(10),"%0A")'
+    N, RG, PH, EM, PM, EN, RF = (f'{col["Customer Name"]}{r}', f'{col["Registration"]}{r}', f'{col["Contact Number"]}{r}', f'{col["Email Address"]}{r}',
+                                 f'{col["Preferred Method"]}{r}', f'{col["Enquiry"]}{r}', f'{col["Ref"]}{r}')
+    details = (f'"Ref: "&{RF}&CHAR(10)&"Customer: "&{N}&"  "&{RG}&CHAR(10)&"Phone: "&{PH}&CHAR(10)&"Email: "&{EM}&CHAR(10)'
+               f'&"Prefers: "&{PM}&CHAR(10)&"Enquiry: "&LEFT({EN},600)&CHAR(10)&CHAR(10)&"Sent from the Preston Mazda enquiry log."')
+    adv_email = f'IFERROR(INDEX(Staff!$B$4:$B${STAFF_LAST},MATCH({col["Service Advisor"]}{r},Staff!$A$4:$A${STAFF_LAST},0)),"")'
+    parts_email = f'IFERROR(INDEX(Staff!$E$4:$E${STAFF_LAST},MATCH({col["Parts Person"]}{r},Staff!$D$4:$D${STAFF_LAST},0)),"")'
+    subj_parts = f'"Parts quote required - "&{N}&" "&{RG}'
+    subj_adv = f'"Customer contact required - "&{N}&" "&{RG}'
+    subj_alloc_a = f'"Enquiry "&{RF}&" allocated to you - "&{N}'
+    subj_alloc_p = f'"Parts quote "&{RF}&" allocated to you - "&{N}'
+    ws[f"{col['Email Parts']}{r}"] = (f'=IF(AND({col["Quote Required"]}{r}="Yes",{col["Parts Done"]}{r}<>"Yes"),'
+        f'HYPERLINK("mailto:"&Settings!$B$5&"?subject="&{enc(subj_parts)}&"&body="&{enc(details)},"✉ Email parts"),"")')
+    ws[f"{col['Email Advisors']}{r}"] = (f'=IF(AND({col["Contact Customer"]}{r}="Yes",{col["Advisor Done"]}{r}<>"Yes"),'
+        f'HYPERLINK("mailto:"&Settings!$B$6&"?subject="&{enc(subj_adv)}&"&body="&{enc(details)},"✉ Email advisors"),"")')
+    ws[f"{col['Email the Advisor']}{r}"] = (f'=IF(OR({col["Service Advisor"]}{r}="",{adv_email}=""),"",'
+        f'HYPERLINK("mailto:"&{adv_email}&"?subject="&{enc(subj_alloc_a)}&"&body="&{enc(details)},"✉ Email "&{col["Service Advisor"]}{r}))')
+    ws[f"{col['Email the Parts Person']}{r}"] = (f'=IF(OR({col["Parts Person"]}{r}="",{parts_email}=""),"",'
+        f'HYPERLINK("mailto:"&{parts_email}&"?subject="&{enc(subj_alloc_p)}&"&body="&{enc(details)},"✉ Email "&{col["Parts Person"]}{r}))')
     ws[f"{col['Status']}{r}"] = (f'=IF({col["Customer Name"]}{r}="","",IF(AND({col["Advisor Done"]}{r}="Yes",'
                                 f'OR({col["Quote Required"]}{r}<>"Yes",{col["Parts Done"]}{r}="Yes")),"Complete","Open"))')
     for idx in range(1, NCOL + 1):
         c = ws.cell(row=r, column=idx)
         c.font = font(10); c.border = grid
-        c.alignment = Alignment(vertical="top", wrap_text=idx in (9, 12))
+        c.alignment = Alignment(vertical="top", wrap_text=idx in (9, 11))
     ws[f"{col['Ref']}{r}"].font = font(9, False, INK3); ws[f"{col['Ref']}{r}"].alignment = Alignment(horizontal="center", vertical="top")
     ws[f"{col['Date Logged']}{r}"].number_format = "dd/mm/yyyy"
     ws[f"{col['Customer Name']}{r}"].font = font(10, True)
     ws[f"{col['Registration']}{r}"].font = Font(name="Consolas", size=10)
-    ws[f"{col['Quote Link']}{r}"].font = font(10, True, MZ_RED, )
+    ws[f"{col['Quote (PDF)']}{r}"].font = font(10, True, MZ_RED)
     ws[f"{col['Status']}{r}"].alignment = Alignment(horizontal="center", vertical="top")
     for h in ("Preferred Method", "Contact Customer", "Advisor Done", "Quote Required", "Parts Done"):
         ws[f"{col[h]}{r}"].alignment = Alignment(horizontal="center", vertical="top")
-    for h in ("Parts Alert Sent", "Contact Alert Sent", "Advisor Alerted", "Parts Person Alerted", "Parts Done Alert Sent"):
-        ws[f"{col[h]}{r}"].font = font(9, False, INK3); ws[f"{col[h]}{r}"].fill = fill(SURFACE2)
+    for h in ("Email Parts", "Email Advisors", "Email the Advisor", "Email the Parts Person"):
+        ws[f"{col[h]}{r}"].font = font(10, True, MZ_RED); ws[f"{col[h]}{r}"].fill = fill(SURFACE2)
 
 # Example row (delete before use – says so in the Setup Guide)
 ex = {"Date Logged": "2026-09-24", "Logged By": "Steve Smith", "Customer Name": "Jane Citizen", "Registration": "ABC123",
       "Contact Number": "0400 000 000", "Email Address": "jane@example.com", "Preferred Method": "Text",
-      "Enquiry": "Price on front brake pads and rotors for a 2019 CX-5.", "Quote File": "E-0001 Jane Citizen brakes.pdf",
+      "Enquiry": "Price on front brake pads and rotors for a 2019 CX-5.",
       "Notes": "24/09 Customer called, wants the quote by Friday. – Sam", "Spoke To Customer": "Sam Carter",
       "Service Advisor": "Sam Carter", "Contact Customer": "Yes", "Advisor Done": "No", "Parts Person": "Pat Nguyen",
       "Quote Required": "Yes", "Parts Done": "No"}
@@ -166,7 +191,6 @@ st["A2"] = "Service advisors"; st["D2"] = "Parts department"
 for c in ("A2", "D2"): st[c].font = font(10, True, INK2)
 for c, h in (("A3", "Name"), ("B3", "Email"), ("D3", "Name"), ("E3", "Email")):
     st[c] = h; st[c].font = font(10, True); st[c].fill = fill(SURFACE2); st[c].border = grid
-STAFF_LAST = 33
 for r in range(4, STAFF_LAST + 1):
     for c in "ABDE":
         st[f"{c}{r}"].border = grid; st[f"{c}{r}"].font = font(10); st[f"{c}{r}"].fill = fill(INPUT_BG)
@@ -191,10 +215,9 @@ for c in "ABC": se[f"{c}1"].fill = fill(MZ_BLACK); se[f"{c}1"].border = Border(b
 rows = [
     ("Dealership", "Preston Mazda", "Shown in alert emails."),
     ("Approver (shares the file)", "steves@maxkirwan.com.au", "Access is approved by sharing the file with a person (SharePoint 'Share'). Nobody else can open it."),
-    ("Parts alerts go to", "parts@maxkirwan.com.au", "Emailed when 'Quote Required' is set to Yes."),
-    ("Advisor alerts go to", "advisors@maxkirwan.com.au", "Emailed when 'Contact Customer' is set to Yes."),
-    ("Quotes folder URL", "https://YOURTENANT.sharepoint.com/sites/Service/Shared%20Documents/Enquiry%20Quotes/", "The SharePoint folder where PDF quotes are saved. Must end with a slash. 'Quote Link' on the log = this + the file name."),
-    ("Alert check interval", "5 minutes", "How often the Power Automate flow looks for new alerts to send."),
+    ("Parts alerts go to", "parts@maxkirwan.com.au", "The 'Email parts' link appears when 'Quote Required' is Yes."),
+    ("Advisor alerts go to", "advisors@maxkirwan.com.au", "The 'Email advisors' link appears when 'Contact Customer' is Yes."),
+    ("Quotes folder URL", "https://YOURTENANT.sharepoint.com/sites/Service/Shared%20Documents/Enquiry%20Quotes/", "The SharePoint folder where PDF quotes are saved. Must end with a slash. Each row's 'Open E-0012.pdf' link = this + the Ref + .pdf"),
 ]
 se["A2"], se["B2"], se["C2"] = "Setting", "Value", "Notes"
 for c in "ABC": se[f"{c}2"].font = font(10, True); se[f"{c}2"].fill = fill(SURFACE2); se[f"{c}2"].border = grid
@@ -218,50 +241,38 @@ for c in "AB": g[f"{c}1"].border = Border(bottom=Side(style="thick", color=MZ_RE
 GUIDE = [
     ("H", "What this is"),
     ("P", "A shared Excel log kept in SharePoint. Everyone with access opens the same file in Excel (desktop or browser) and sees each other's changes within seconds. "
-          "Sign-in is your normal Microsoft 365 login, so there are no separate passwords or resets. A Power Automate flow (part of Microsoft 365, runs in the cloud, nothing to install) "
-          "sends the email alerts and Teams pop-ups. Set-up takes about 30 minutes and needs no IT installs."),
-    ("H", "1. Put the file in SharePoint"),
-    ("S", "a) In your Service team's SharePoint site (or a Teams channel's Files tab), create a folder called 'Enquiry Log'."),
-    ("S", "b) Upload this workbook into it. Next to it create a folder called 'Enquiry Quotes' – PDF quotes go in there."),
-    ("S", "c) Open the 'Enquiry Quotes' folder in the browser, copy the address bar URL, and paste it into Settings → 'Quotes folder URL' (it must end with a slash). "
-          "If the URL has '?…' after the folder name, delete that part."),
-    ("S", "d) Delete the example row on the Enquiry Log (Jane Citizen) and replace the example names on the Staff sheet with your team and their work email addresses."),
-    ("H", "2. Who can use it (approval)"),
-    ("S", "Only people the file is shared with can open it. Steve (steves@maxkirwan.com.au) shares it: click 'Share' in SharePoint, type the person's work email, choose 'Can edit'. "
-          "To remove someone, 'Manage access' → remove. That is the approval step – nothing else to set up. Forgotten passwords are handled by the normal Microsoft sign-in page."),
-    ("H", "3. Day-to-day use"),
-    ("S", "• Each customer enquiry is one row. Type in the yellow-free cells; the Ref, Quote Link and Status columns fill themselves."),
+          "Sign-in is your normal Microsoft 365 login, so there are no separate passwords or resets. Nothing is installed and nothing runs in the background: "
+          "quotes are PDFs saved into a folder, and email alerts are one-click links that open a ready-written email in Outlook."),
+    ("H", "1. Put the file in SharePoint (once, 10 minutes)"),
+    ("S", "a) In your Service team's SharePoint site (or a Teams channel's Files tab), create a folder called 'Enquiry Log' and upload this workbook into it."),
+    ("S", "b) Next to it create a folder called 'Enquiry Quotes'. Open that folder in the browser, copy the address bar URL, and paste it into Settings → 'Quotes folder URL'. "
+          "It must end with a slash. If the URL has '?…' after the folder name, delete from the '?' onwards."),
+    ("S", "c) On the Staff sheet replace the example names with your team and their work email addresses (the email links use these). Delete the Jane Citizen example row on the Enquiry Log."),
+    ("S", "d) Share the file: click 'Share' in SharePoint, type each person's work email, choose 'Can edit'. Only people it is shared with can open it – that is the approval step."),
+    ("H", "2. Make the Quotes folder appear in File Explorer on each PC (once per PC, 2 minutes)"),
+    ("S", "This is what makes attaching quotes easy for everyone. Open the 'Enquiry Quotes' folder in the browser and click 'Sync' in the toolbar (or 'Add shortcut to OneDrive'). "
+          "It now shows in File Explorer on the left under the dealership name, like any other folder. Right-click it → 'Pin to Quick access' so it is always at the top."),
+    ("H", "3. Attaching a quote – three steps, no typing in the sheet"),
+    ("S", "1) Look at the Ref on the enquiry's row, e.g. E-0012."),
+    ("S", "2) From the parts system (or wherever the quote is), choose Print → 'Microsoft Print to PDF' (or Save as PDF), click the 'Enquiry Quotes' folder in Quick access, type the Ref as the file name (E-0012) and Save. "
+          "If the quote arrived as an email attachment, just drag the attachment into that folder and rename it to the Ref."),
+    ("S", "3) That is it. The row's 'Open E-0012.pdf' link now opens the quote for everyone. The link is there from the start; if nobody has saved the file yet it simply says the file was not found."),
+    ("S", "A second version? Save it over the first (SharePoint keeps the old one under Version history) or name it 'E-0012 revised' and find it via 'Open the quotes folder' in the black bar."),
+    ("H", "4. Email alerts – one click, then press Send"),
+    ("S", "The four red links on the right of each row open a new email in Outlook with the address, subject and the enquiry details already filled in. Click the link, glance at it, press Send. Outlook's own pop-up notifies the person when it arrives."),
+    ("S", "• 'Email parts' appears when Quote Required = Yes (goes to parts@maxkirwan.com.au) and disappears once Parts Done = Yes."),
+    ("S", "• 'Email advisors' appears when Contact Customer = Yes (goes to advisors@maxkirwan.com.au) and disappears once Advisor Done = Yes."),
+    ("S", "• 'Email <name>' appears when a Service Advisor or Parts Person is chosen – it goes to that person's own address from the Staff sheet, so they know the job is theirs."),
+    ("S", "If a link does nothing, Outlook is not set as the default mail program on that PC: Windows Settings → Apps → Default apps → Email → Outlook."),
+    ("H", "5. Day-to-day use"),
+    ("S", "• Each customer enquiry is one row. Type in the cells; Ref, Quote (PDF), Status and the email links fill themselves."),
     ("S", "• Preferred Method, Service Advisor, Parts Person and the four Yes/No columns are drop-downs (click the cell, then the arrow). Contact Customer = Yes means a service advisor must ring/text/email the customer. Quote Required = Yes means the parts department must prepare a quote."),
     ("S", "• Each department marks its own task: Advisor Done and Parts Done. When both are done (or no quote was needed) Status shows 'Complete' and the row turns green. Use the filter arrow on Status to hide complete rows."),
-    ("S", "• Attaching a quote: save the PDF into the 'Enquiry Quotes' folder named with the Ref, e.g. 'E-0012 Smith brakes.pdf', then type that file name into Quote File. 'Open quote' becomes a link."),
     ("S", "• Notes: write what was discussed in Notes (Alt+Enter for a new line, start each note with the date) and put the name of the person who spoke to the customer in Spoke To Customer. "
           "For a running conversation you can also right-click the row → New Comment; comments record who wrote them and when."),
     ("S", "• Date Logged: press Ctrl+; to insert today's date. Logged By: your name."),
-    ("S", "• Do not sort the table (use the filter arrows instead) – the Ref numbers follow the row position. Filtering is fine."),
-    ("S", "• The grey 'ALERTS' columns on the right are written by the flow. Leave them alone; clearing a cell makes the flow send that alert again."),
-    ("H", "4. Email alerts and pop-ups (Power Automate) – build once, about 20 minutes"),
-    ("P", "Go to https://make.powerautomate.com, sign in with your work account, click 'Create' → 'Scheduled cloud flow'. Name: 'Enquiry log alerts'. Repeat every 5 minutes. Then add these steps in order:"),
-    ("S", "STEP 1 – 'List rows present in a table' (Excel Online (Business)). Location: your SharePoint site · Document Library: Documents · File: Enquiry Log/…xlsx · Table: EnquiryLog. "
-          "Under advanced options set Filter Query to:  Customer Name ne ''  (so blank rows are skipped)."),
-    ("S", "STEP 2 – 'List rows present in a table' again for Table: Advisors (same file), and a third one for Table: PartsStaff. Rename them 'Advisors' and 'Parts staff'."),
-    ("S", "STEP 3 – 'Apply to each' over the output of Step 1 ('value'). Inside it add the following Conditions (each one is a separate Condition block, one under the other, not nested):"),
-    ("S", "  A) PARTS QUOTE REQUIRED  →  Condition: 'Quote Required' is equal to Yes  AND  'Parts Alert Sent' is equal to '' (empty). "
-          "If yes: 'Send an email (V2)' To: parts@maxkirwan.com.au, Subject: Parts quote required – [Customer Name] [Registration], Body: the row's details (Ref, name, rego, phone, email, preferred method, enquiry, service advisor). "
-          "Then 'Update a row' (Excel Online): same file/table, Key Column: Ref, Key Value: [Ref], and set Parts Alert Sent to the expression  formatDateTime(utcNow(),'dd/MM/yyyy HH:mm')."),
-    ("S", "  B) ADVISOR MUST CONTACT CUSTOMER  →  Condition: 'Contact Customer' is equal to Yes AND 'Contact Alert Sent' is equal to ''. "
-          "If yes: Send an email (V2) To: advisors@maxkirwan.com.au, Subject: Customer contact required – [Customer Name] [Registration], Body: details + 'Preferred method: [Preferred Method]'. Then Update a row → Contact Alert Sent = formatDateTime(utcNow(),'dd/MM/yyyy HH:mm')."),
-    ("S", "  C) ALLOCATED TO A SERVICE ADVISOR (email + pop-up to that person)  →  Condition: 'Service Advisor' is not equal to '' AND 'Service Advisor' is not equal to 'Advisor Alerted'. "
-          "If yes: add a 'Filter array' on the Advisors list (Step 2) where Name is equal to [Service Advisor]; then Send an email (V2) To: the expression  first(body('Filter_array'))?['Email']  , "
-          "Subject: Enquiry [Ref] allocated to you – [Customer Name], Body: details. Then 'Post message in a chat or channel' (Microsoft Teams): Post as Flow bot, Post in Chat with Flow bot, Recipient: the same email expression, "
-          "Message: 'Enquiry [Ref] ([Customer Name], [Registration]) has been allocated to you. [Enquiry]'. This appears as a Teams pop-up notification on their PC and phone. Then Update a row → Advisor Alerted = [Service Advisor]."),
-    ("S", "  D) ALLOCATED TO A PARTS PERSON  →  same as C using 'Parts Person', the Parts staff list, and Update a row → Parts Person Alerted = [Parts Person]."),
-    ("S", "  E) PARTS QUOTE DONE – tell the advisor  →  Condition: 'Parts Done' is equal to Yes AND 'Parts Done Alert Sent' is equal to '' AND 'Service Advisor' is not equal to ''. "
-          "If yes: look up the advisor's email as in C, Send an email (V2) + Teams message 'Parts quote ready for [Customer Name] ([Ref])', then Update a row → Parts Done Alert Sent = formatDateTime(utcNow(),'dd/MM/yyyy HH:mm')."),
-    ("S", "STEP 4 – Save, then click 'Test' → Manually → Run. Set a row's Quote Required to Yes, wait 5 minutes and check parts@ received the email and the grey 'Parts Alert Sent' cell filled in."),
-    ("P", "Tips: in a Condition, pick the column from 'Dynamic content' (they are listed under the Step 1 action). For 'is equal to' blank, leave the right-hand box empty. "
-          "If you converted the Yes/No columns to Excel check boxes (Insert → Checkbox), compare with 'true' instead of 'Yes'. "
-          "If Power Automate says it is not available to you, ask IT to enable it for your account – it is included in Microsoft 365 business plans. Until the flow exists the log still works; only the automatic alerts are missing."),
-    ("H", "5. Where the data lives"),
+    ("S", "• Do not sort the table (use the filter arrows instead) – the Ref numbers follow the row position, and the quote files are named by Ref. Filtering is fine."),
+    ("H", "6. Where the data lives"),
     ("P", "Everything is in this workbook and the Quotes folder on your SharePoint site – inside the dealership's own Microsoft 365 tenant, under IT's existing controls and backups. Nothing is on any other website. "
           "SharePoint keeps version history: right-click the file → Version history to restore an earlier copy if something is deleted by mistake."),
 ]
