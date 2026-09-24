@@ -12,11 +12,11 @@ and everything is stored in that browser's local storage.
 ## Customer enquiry tracker
 
 The `tracker/` folder holds a separate, self-hosted **Preston Mazda Customer
-Enquiry Tracker**: sign-in with work email and manager approval, live shared
-enquiry board, allocation to service advisors and the parts department with
-per-department done boxes, PDF parts quotes, interaction notes, and email +
-pop-up alerts. It shares this dashboard's stylesheet and brand assets. See
-[`tracker/README.md`](tracker/README.md) for setup.
+Enquiry Log**: a live, spreadsheet-style sheet of customer enquiries with
+work-email sign-in and manager approval, allocation to service advisors and
+the parts department with per-department done boxes, PDF parts quotes,
+interaction notes, and email + pop-up alerts. It uses this dashboard's fonts
+and colours. See [`tracker/README.md`](tracker/README.md) for setup.
 
 ## What it shows
 

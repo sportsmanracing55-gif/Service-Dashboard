@@ -267,9 +267,15 @@ function validUserId(id, department) {
 function applyEnquiryInput(e, input, actor, isNew) {
   const c = input.customer || {};
   if (isNew || input.customer) {
+    // Partial updates are allowed: only the keys present are changed.
+    const cur = e.customer || {};
+    const has = (k) => isNew || Object.prototype.hasOwnProperty.call(c, k);
     e.customer = {
-      name: str(c.name, 120), registration: str(c.registration, 20).toUpperCase(), phone: str(c.phone, 40),
-      email: lower(c.email), preferred: PREFERRED.includes(c.preferred) ? c.preferred : "call"
+      name: has("name") ? str(c.name, 120) : cur.name,
+      registration: has("registration") ? str(c.registration, 20).toUpperCase() : (cur.registration || ""),
+      phone: has("phone") ? str(c.phone, 40) : (cur.phone || ""),
+      email: has("email") ? lower(c.email) : (cur.email || ""),
+      preferred: has("preferred") ? (PREFERRED.includes(c.preferred) ? c.preferred : "call") : (cur.preferred || "call")
     };
     if (!e.customer.name) throw new HttpError(400, "Customer name is required.");
     if (e.customer.email && !isEmail(e.customer.email)) throw new HttpError(400, "Customer email address does not look right.");

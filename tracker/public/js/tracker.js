@@ -7,7 +7,7 @@
   "use strict";
   const THEME_KEY = "pm-tracker.theme";
   const S = { config: null, user: null, users: [], enquiries: [], counts: { open: 0, closed: 0 }, filter: { status: "open", q: "", quick: "" },
-    notifications: [], unread: 0, sse: null, openEnquiryId: null, notesFor: null, filesFor: null, alertQueue: [] };
+    notifications: [], unread: 0, sse: null, notesFor: null, filesFor: null, alertQueue: [] };
 
   // ---- tiny DOM helpers ----------------------------------------------------
   function $(sel, root) { return (root || document).querySelector(sel); }
@@ -122,7 +122,7 @@
     if (guest.includes(r.path)) { location.replace("#/"); return; }
     if (r.path === "/users") { if (S.user.role !== "admin") { location.replace("#/"); return; } clear(app); app.appendChild(viewUsers()); loadUsers(); return; }
     const m = /^\/enquiry\/([^/]+)$/.exec(r.path);
-    if (m) { renderBoard(); const e = S.enquiries.find(function (x) { return x.id === m[1]; }); if (e) openEnquiryDialog(e); else api("GET", "/api/enquiries/" + encodeURIComponent(m[1])).then(function (d) { openEnquiryDialog(d.enquiry); }).catch(function () { toast("That enquiry no longer exists.", true); location.replace("#/"); }); return; }
+    if (m) { renderBoard(); focusRow(m[1]); history.replaceState(null, "", "#/"); return; }
     renderBoard();
   }
 
@@ -246,7 +246,7 @@
     const d = await api("GET", "/api/users");
     S.users = d.users; S.mail = d.mail || null;
     if (currentRoute().path === "/users") { const v = $("#usersView"); if (v) fillUsers(v); }
-    if ($("#enquiryDialog").open) fillAllocationSelects($("#enquiryForm"));
+    if (currentRoute().path === "/") fillSheet();
   }
   async function loadEnquiries() {
     if (!S.user) return;
@@ -290,180 +290,327 @@
   function stopLive() { if (S.sse) { S.sse.close(); S.sse = null; } setLive(false); }
   function setLive(on) { const s = $("#liveStatus"); s.className = "live " + (on ? "live--on" : "live--off"); s.textContent = on ? "● Live" : "● Reconnecting…"; if (!S.user) s.textContent = "● Offline"; }
 
-  // ---- board ---------------------------------------------------------------------
-  function renderBoard() {
-    const app = $("#app");
-    let view = $("#boardView");
-    if (!view) {
-      clear(app);
-      view = el("div", { id: "boardView", class: "board-view" });
-      view.appendChild(el("section", { class: "section" }, [el("div", { class: "tiles", id: "tiles" })]));
-      const toolbar = el("div", { class: "toolbar" }, [
-        el("input", { class: "search", type: "search", id: "search", placeholder: "Search name, rego, phone, email, enquiry…", value: S.filter.q, oninput: function (ev) { S.filter.q = ev.target.value; fillBoard(); } }),
-        el("div", { class: "seg", id: "statusSeg" }, ["open", "closed", "all"].map(function (s) {
-          return el("button", { type: "button", "data-status": s, class: S.filter.status === s ? "is-active" : "", text: s === "open" ? "Open" : s === "closed" ? "Closed" : "All", onclick: function () { S.filter.status = s; S.filter.quick = ""; $$("#statusSeg button").forEach(function (b) { b.classList.toggle("is-active", b.getAttribute("data-status") === s); }); loadEnquiries(); } });
-        }))
-      ]);
-      view.appendChild(el("section", { class: "section" }, [
-        el("div", { class: "section__head" }, [el("h2", { class: "section__title", text: "Customer enquiries" }), el("p", { class: "section__meta", id: "boardMeta" })]),
-        toolbar,
-        el("div", { class: "card card--table" }, [el("div", { class: "table-wrap" }, [
-          el("table", { class: "board enq", id: "enqTable" }, [
-            el("thead", null, [el("tr", null, [
-              el("th", { scope: "col", text: "Customer" }), el("th", { scope: "col", text: "Contact" }), el("th", { scope: "col", text: "Enquiry" }),
-              el("th", { scope: "col", text: "Service advisor" }), el("th", { scope: "col", text: "Parts department" }),
-              el("th", { scope: "col", text: "Quotes / notes" }), el("th", { scope: "col", text: "Updated" }), el("th", { scope: "col", text: "" })
-            ])]),
-            el("tbody", { id: "enqBody" })
-          ])
-        ])])
-      ]));
-      app.appendChild(view);
-    }
-    fillTiles();
-    fillBoard();
+  // ---- sheet (spreadsheet-style enquiry log) ----------------------------------------
+  // Every enquiry is a row; every field is a cell you type straight into. Changes save
+  // on the spot. Draft rows live in the browser until a customer name is entered.
+  S.drafts = [];
+  S.sort = { key: "ref", dir: 1 };
+
+  const COLS = [
+    { group: "", key: "ref", label: "#", cls: "c-ref", sort: "ref" },
+    { group: "Customer", key: "customer.name", label: "Name", cls: "c-name", type: "text", sort: "name", placeholder: "Customer name" },
+    { group: "Customer", key: "customer.registration", label: "Registration", cls: "c-rego", type: "text", sort: "registration", upper: true, placeholder: "ABC123" },
+    { group: "Customer", key: "customer.phone", label: "Contact number", cls: "c-phone", type: "tel", sort: "phone" },
+    { group: "Customer", key: "customer.email", label: "Email address", cls: "c-email", type: "email", sort: "email" },
+    { group: "Customer", key: "customer.preferred", label: "Preferred method", cls: "c-pref", type: "select", options: [["call", "Call"], ["text", "Text"], ["email", "Email"]], sort: "preferred" },
+    { group: "Customer", key: "enquiry", label: "Enquiry", cls: "c-enq", type: "text", placeholder: "What they are asking about" },
+    { group: "", key: "attachments", label: "📎", title: "Parts quotes (PDF)", cls: "c-icon" },
+    { group: "", key: "notes", label: "🗒", title: "Notes", cls: "c-icon" },
+    { group: "Service advisor", key: "advisor.userId", label: "Allocated to", cls: "c-user", type: "user", dept: "service", sort: "advisor" },
+    { group: "Service advisor", key: "advisor.contactRequired", label: "Contact customer", cls: "c-check", type: "check", title: "Emails " + "advisors@" },
+    { group: "Service advisor", key: "advisor.done", label: "Done", cls: "c-check c-done", type: "check" },
+    { group: "Parts department", key: "parts.userId", label: "Allocated to", cls: "c-user", type: "user", dept: "parts", sort: "parts" },
+    { group: "Parts department", key: "parts.quoteRequired", label: "Quote required", cls: "c-check", type: "check", title: "Emails parts@" },
+    { group: "Parts department", key: "parts.done", label: "Done", cls: "c-check c-done", type: "check" },
+    { group: "", key: "status", label: "Status", cls: "c-status", type: "select", options: [["open", "Open"], ["closed", "Closed"]], sort: "status" },
+    { group: "", key: "logged", label: "Logged", cls: "c-logged", sort: "createdAt" },
+    { group: "", key: "actions", label: "", cls: "c-actions" }
+  ];
+
+  function getPath(obj, key) { return key.split(".").reduce(function (o, k) { return o == null ? undefined : o[k]; }, obj); }
+  function setPath(obj, key, val) { const ks = key.split("."); let o = obj; ks.slice(0, -1).forEach(function (k) { o = o[k] = o[k] || {}; }); o[ks[ks.length - 1]] = val; }
+  function bodyFor(e, key, val) {
+    const body = {};
+    if (key.indexOf("customer.") === 0) { body.customer = {}; body.customer[key.slice(9)] = val; }
+    else if (key.indexOf(".") > 0) { const p = key.split("."); body[p[0]] = {}; body[p[0]][p[1]] = val; }
+    else body[key] = val;
+    return body;
   }
-  function fillTiles() {
-    const open = S.enquiries.filter(function (e) { return e.status === "open"; });
-    const all = S.filter.status === "open" ? open : open.length ? open : S.enquiries.filter(function (e) { return e.status === "open"; });
-    const stats = [
-      { key: "", label: "Open enquiries", value: S.counts.open, status: "none" },
-      { key: "parts", label: "Awaiting parts quote", value: all.filter(function (e) { return e.parts.quoteRequired && !e.parts.done; }).length, status: "warn" },
-      { key: "contact", label: "Awaiting advisor contact", value: all.filter(function (e) { return e.advisor.contactRequired && !e.advisor.done; }).length, status: "bad" },
-      { key: "mine", label: "Allocated to me", value: all.filter(function (e) { return (e.advisor.userId === S.user.id && !e.advisor.done) || (e.parts.userId === S.user.id && !e.parts.done); }).length, status: "none" },
-      { key: "complete", label: "Complete, not yet closed", value: all.filter(isComplete).length, status: "good" }
-    ];
-    const tiles = clear($("#tiles"));
-    stats.forEach(function (t) {
-      tiles.appendChild(el("div", { class: "tile tile--click tile--status-" + (t.value ? t.status : "none") + (S.filter.quick === t.key && t.key ? " tile--active" : ""), role: "button", tabindex: "0",
-        onclick: function () { S.filter.quick = S.filter.quick === t.key ? "" : t.key; if (S.filter.status !== "open") { S.filter.status = "open"; $$("#statusSeg button").forEach(function (b) { b.classList.toggle("is-active", b.getAttribute("data-status") === "open"); }); loadEnquiries(); } else renderBoard(); },
-        onkeydown: function (ev) { if (ev.key === "Enter" || ev.key === " ") { ev.preventDefault(); ev.target.click(); } } }, [
-        el("div", { class: "tile__label", text: t.label }), el("div", { class: "tile__value", text: String(t.value) })
-      ]));
-    });
+  function newDraft() {
+    return { id: "draft_" + Date.now().toString(36) + Math.random().toString(36).slice(2, 6), draft: true, ref: "new", customer: { name: "", registration: "", phone: "", email: "", preferred: "call" }, enquiry: "",
+      advisor: { userId: S.user.department === "service" ? S.user.id : null, contactRequired: false, done: false }, parts: { userId: null, quoteRequired: false, done: false },
+      status: "open", attachments: [], notes: [], createdAt: null };
+  }
+  function sortValue(e, key) {
+    switch (key) {
+      case "ref": return e.draft ? "~" : e.ref;
+      case "name": return (e.customer.name || "").toLowerCase();
+      case "registration": return e.customer.registration || "";
+      case "phone": return e.customer.phone || "";
+      case "email": return e.customer.email || "";
+      case "preferred": return e.customer.preferred || "";
+      case "advisor": return userName(e.advisor.userId).toLowerCase();
+      case "parts": return userName(e.parts.userId).toLowerCase();
+      case "status": return e.status;
+      case "createdAt": return e.createdAt || "~";
+      default: return "";
+    }
+  }
+  function visibleRows() {
+    let list = S.enquiries.filter(function (e) { return matches(e, S.filter.q); });
+    const dir = S.sort.dir, key = S.sort.key;
+    list.sort(function (a, b) { const x = sortValue(a, key), y = sortValue(b, key); return x < y ? -dir : x > y ? dir : 0; });
+    return list.concat(S.drafts);
   }
   function matches(e, q) {
     if (!q) return true;
     const hay = [e.ref, e.customer.name, e.customer.registration, e.customer.phone, e.customer.email, e.enquiry, userName(e.advisor.userId), userName(e.parts.userId)].concat(e.notes.map(function (n) { return n.text; })).join(" ").toLowerCase();
     return q.toLowerCase().split(/\s+/).every(function (w) { return hay.includes(w); });
   }
-  function fillBoard() {
-    const body = clear($("#enqBody"));
-    let list = S.enquiries.filter(function (e) { return matches(e, S.filter.q); });
-    if (S.filter.quick === "parts") list = list.filter(function (e) { return e.parts.quoteRequired && !e.parts.done; });
-    if (S.filter.quick === "contact") list = list.filter(function (e) { return e.advisor.contactRequired && !e.advisor.done; });
-    if (S.filter.quick === "mine") list = list.filter(function (e) { return (e.advisor.userId === S.user.id && !e.advisor.done) || (e.parts.userId === S.user.id && !e.parts.done); });
-    if (S.filter.quick === "complete") list = list.filter(isComplete);
-    $("#boardMeta").textContent = list.length + " of " + S.enquiries.length + " shown · " + S.counts.open + " open, " + S.counts.closed + " closed";
-    if (!list.length) { body.appendChild(el("tr", null, [el("td", { colspan: "8", class: "empty", text: S.enquiries.length ? "Nothing matches that filter." : "No enquiries yet. Click “New enquiry” to log the first one." })])); return; }
-    list.forEach(function (e) { body.appendChild(rowFor(e)); });
+
+  function renderBoard() {
+    const app = $("#app");
+    let view = $("#sheetView");
+    if (!view) {
+      clear(app);
+      view = el("div", { id: "sheetView" });
+      const toolbar = el("div", { class: "toolbar" }, [
+        el("button", { class: "btn btn--primary", type: "button", id: "btnAddRow", text: "+ New row", onclick: addRow }),
+        el("input", { class: "search", type: "search", id: "search", placeholder: "Search name, rego, phone, email, enquiry, notes…", value: S.filter.q, oninput: function (ev) { S.filter.q = ev.target.value; fillSheet(); } }),
+        el("div", { class: "seg", id: "statusSeg" }, ["open", "closed", "all"].map(function (s) {
+          return el("button", { type: "button", "data-status": s, class: S.filter.status === s ? "is-active" : "", text: s === "open" ? "Open" : s === "closed" ? "Closed" : "All", onclick: function () { setStatusFilter(s); } });
+        })),
+        el("span", { class: "toolbar__meta", id: "sheetMeta" }),
+        el("button", { class: "btn", type: "button", text: "Export CSV", onclick: exportCsv })
+      ]);
+      const thead = el("thead", null, [
+        el("tr", { class: "groups" }, groupHeaders()),
+        el("tr", null, COLS.map(function (c) {
+          const th = el("th", { scope: "col", class: c.cls + (c.sort ? " sortable" : ""), title: c.title || null, text: c.label });
+          if (c.sort) th.addEventListener("click", function () { if (S.sort.key === c.sort) S.sort.dir = -S.sort.dir; else S.sort = { key: c.sort, dir: 1 }; fillSheet(); });
+          return th;
+        }))
+      ]);
+      const table = el("table", { class: "sheet", id: "sheet" }, [thead, el("tbody", { id: "sheetBody" })]);
+      const wrap = el("div", { class: "sheet-wrap", id: "sheetWrap" }, [table]);
+      view.appendChild(toolbar);
+      view.appendChild(wrap);
+      view.appendChild(el("p", { class: "help sheet-help", text: "Type straight into the cells – changes save as you go. Enter or the arrow keys move up and down a column, Tab moves across. Ticking “Contact customer” emails " + S.config.advisorsEmail + "; ticking “Quote required” emails " + S.config.partsEmail + ". Allocating a row emails and pops up for that person." }));
+      app.appendChild(view);
+    }
+    fillSheet();
+  }
+  function groupHeaders() {
+    const out = []; let i = 0;
+    while (i < COLS.length) {
+      const g = COLS[i].group; let span = 1;
+      while (i + span < COLS.length && COLS[i + span].group === g && g) span++;
+      out.push(el("th", { colspan: String(span), class: g ? "group" : "group group--blank", text: g }));
+      i += span;
+    }
+    return out;
+  }
+  function setStatusFilter(s) {
+    S.filter.status = s;
+    $$("#statusSeg button").forEach(function (b) { b.classList.toggle("is-active", b.getAttribute("data-status") === s); });
+    loadEnquiries();
+  }
+  function keepFocus() {
+    const a = document.activeElement;
+    if (!a || !a.closest || !a.closest("#sheetWrap") || !a.getAttribute("data-field")) return null;
+    const tr = a.closest("tr");
+    return { id: tr.getAttribute("data-id"), field: a.getAttribute("data-field"), text: a.tagName === "INPUT" && a.type !== "checkbox", value: a.value, s: a.selectionStart, e: a.selectionEnd };
+  }
+  function restoreFocus(k, newId) {
+    if (!k) return;
+    const t = $('#sheetBody tr[data-id="' + (newId || k.id) + '"] [data-field="' + k.field + '"]');
+    if (!t) return;
+    if (k.text) { t.value = k.value; }
+    t.focus();
+    if (k.text && k.s != null) { try { t.setSelectionRange(k.s, k.e); } catch (e) { /* ignore */ } }
+  }
+  function fillSheet() {
+    const body = $("#sheetBody"); if (!body) return;
+    const keep = keepFocus();
+    $$("tr", body).forEach(function (tr) { tr._replacing = true; });
+    clear(body);
+    const rows = visibleRows();
+    $$("#sheet thead th.sortable").forEach(function (th) { th.classList.remove("is-sorted", "asc"); });
+    const sortedCol = COLS.find(function (c) { return c.sort === S.sort.key; });
+    if (sortedCol) { const th = $$("#sheet thead tr:last-child th")[COLS.indexOf(sortedCol)]; th.classList.add("is-sorted"); if (S.sort.dir < 0) th.classList.add("asc"); }
+    $("#sheetMeta").textContent = (rows.length - S.drafts.length) + " row" + (rows.length - S.drafts.length === 1 ? "" : "s") + " · " + S.counts.open + " open, " + S.counts.closed + " closed";
+    if (!rows.length) { body.appendChild(el("tr", { class: "empty-row" }, [el("td", { colspan: String(COLS.length), class: "empty", text: S.enquiries.length ? "Nothing matches that search." : "No enquiries yet. Click “+ New row” and start typing." })])); return; }
+    rows.forEach(function (e, i) { body.appendChild(rowFor(e, i + 1)); });
+    restoreFocus(keep);
+  }
+  function refreshRow(e) {
+    const old = $('#sheetBody tr[data-id="' + e.id + '"]');
+    if (!old) { fillSheet(); return; }
+    const keep = keepFocus();
+    const n = old.querySelector(".rownum") ? old.querySelector(".rownum").textContent : "";
+    old._replacing = true;
+    old.replaceWith(rowFor(e, n));
+    if (keep && keep.id === e.id) restoreFocus(keep);
+  }
+
+  function cellFor(e, c, rowIndex) {
+    const td = el("td", { class: c.cls });
+    const val = getPath(e, c.key);
+    switch (c.type) {
+      case "text": case "tel": case "email": {
+        const inp = el("input", { type: c.type, value: val || "", placeholder: c.placeholder || "", "aria-label": c.label, class: c.upper ? "upper" : null, "data-field": c.key, autocomplete: "off", spellcheck: "false" });
+        const save = function () { const tr = inp.closest("tr"); if (!inp.isConnected || (tr && tr._replacing)) return; const v = c.upper ? inp.value.toUpperCase().trim() : inp.value.trim(); if (v !== (getPath(e, c.key) || "")) commit(e, c.key, v); };
+        inp.addEventListener("blur", save);
+        inp.addEventListener("keydown", cellKeys);
+        inp._save = save;
+        td.appendChild(inp);
+        return td;
+      }
+      case "select": {
+        const sel = el("select", { "aria-label": c.label, "data-field": c.key }, c.options.map(function (o) { return el("option", { value: o[0], text: o[1], selected: val === o[0] }); }));
+        sel.addEventListener("change", function () { commit(e, c.key, sel.value); });
+        sel.addEventListener("keydown", cellKeys);
+        td.appendChild(sel);
+        return td;
+      }
+      case "user": {
+        const sel = el("select", { "aria-label": c.label, "data-field": c.key }, userOptions(c.dept, val));
+        sel.addEventListener("change", function () { commit(e, c.key, sel.value || null); });
+        sel.addEventListener("keydown", cellKeys);
+        td.appendChild(sel);
+        return td;
+      }
+      case "check": {
+        const doneBy = c.key.endsWith(".done") && val ? getPath(e, c.key.replace(".done", ".doneByName")) : null;
+        const cb = el("input", { type: "checkbox", checked: !!val, "aria-label": c.label, "data-field": c.key, title: doneBy ? "Done by " + doneBy + " · " + fmtWhen(getPath(e, c.key.replace(".done", ".doneAt"))) : (c.title || null) });
+        cb.addEventListener("change", function () { commit(e, c.key, cb.checked); });
+        cb.addEventListener("keydown", cellKeys);
+        if (val) td.classList.add("is-on");
+        td.appendChild(el("label", { class: "cellcheck" }, [cb, doneBy ? el("span", { class: "doneby", text: doneBy.split(" ")[0] }) : null]));
+        return td;
+      }
+    }
+    switch (c.key) {
+      case "ref": td.appendChild(el("span", { class: "rownum", text: String(rowIndex) })); td.appendChild(el("span", { class: "ref", text: e.draft ? "new" : e.ref })); td.title = e.draft ? "Not saved yet – enter a name" : e.ref; return td;
+      case "attachments": td.appendChild(el("button", { class: "iconbtn iconbtn--file" + (e.attachments.length ? " has-items" : ""), type: "button", disabled: !!e.draft, title: "Parts quotes (PDF)", "aria-label": "Attachments for " + (e.customer.name || "row"), onclick: function () { openFiles(e); } }, [svg(ICON_CLIP), e.attachments.length ? el("span", { class: "count", text: String(e.attachments.length) }) : null])); return td;
+      case "notes": td.appendChild(el("button", { class: "iconbtn iconbtn--note" + (e.notes.length ? " has-items" : ""), type: "button", disabled: !!e.draft, title: "Notes", "aria-label": "Notes for " + (e.customer.name || "row"), onclick: function () { openNotes(e); } }, [svg(ICON_NOTE), e.notes.length ? el("span", { class: "count", text: String(e.notes.length) }) : null])); return td;
+      case "logged": td.appendChild(el("span", { class: "logged", text: e.draft ? "Unsaved" : fmtWhen(e.createdAt) })); if (!e.draft) td.appendChild(el("span", { class: "logged__by", text: e.createdByName || "" })); td.title = e.draft ? "" : "Last change " + fmtWhen(e.updatedAt) + (e.updatedByName ? " by " + e.updatedByName : ""); return td;
+      case "actions": {
+        const canDelete = e.draft || S.user.role === "admin" || e.createdBy === S.user.id;
+        if (canDelete) td.appendChild(el("button", { class: "rowdel", type: "button", title: e.draft ? "Discard row" : "Delete row", "aria-label": "Delete row", text: "✕", onclick: function () { deleteRow(e); } }));
+        return td;
+      }
+    }
+    return td;
+  }
+  function rowFor(e, rowIndex) {
+    const complete = !e.draft && e.advisor.done && (!e.parts.quoteRequired || e.parts.done);
+    const tr = el("tr", { "data-id": e.id, class: (e.draft ? "is-draft " : "") + (e.status === "closed" ? "is-closed " : "") + (complete && e.status === "open" ? "is-complete" : "") });
+    COLS.forEach(function (c) { tr.appendChild(cellFor(e, c, rowIndex)); });
+    return tr;
+  }
+  function cellKeys(ev) {
+    const inp = ev.target;
+    if (inp.tagName === "SELECT" && (ev.key === "ArrowDown" || ev.key === "ArrowUp")) return; // let selects change value
+    let dir = 0;
+    if (ev.key === "Enter") dir = ev.shiftKey ? -1 : 1;
+    else if (ev.key === "ArrowDown") dir = 1;
+    else if (ev.key === "ArrowUp") dir = -1;
+    else if (ev.key === "Escape") { inp.blur(); return; }
+    if (!dir) return;
+    ev.preventDefault();
+    const tr = inp.closest("tr");
+    const next = dir > 0 ? tr.nextElementSibling : tr.previousElementSibling;
+    if (ev.key === "Enter" && inp._save) inp._save();
+    if (!next) { if (dir > 0 && ev.key === "Enter" && !tr.classList.contains("is-draft")) { addRow(inp.getAttribute("data-field")); } else inp.blur(); return; }
+    const target = next.querySelector('[data-field="' + inp.getAttribute("data-field") + '"]');
+    if (target) { target.focus(); if (target.select && target.type !== "checkbox") target.select(); }
+  }
+
+  async function commit(e, key, val) {
+    if (e.draft) {
+      setPath(e, key, val);
+      if (!e.customer.name.trim() || e.saving) return;
+      // Enough to save: create it on the server, then swap the draft for the real row.
+      e.saving = true;
+      const body = JSON.parse(JSON.stringify({ customer: e.customer, enquiry: e.enquiry, advisor: e.advisor, parts: e.parts }));
+      try {
+        const d = await api("POST", "/api/enquiries", body);
+        // Anything typed into the other cells while the save was in flight goes on as a follow-up.
+        const extra = {};
+        Object.keys(e.customer).forEach(function (k) { if (e.customer[k] !== body.customer[k]) { extra.customer = extra.customer || {}; extra.customer[k] = e.customer[k]; } });
+        if (e.enquiry !== body.enquiry) extra.enquiry = e.enquiry;
+        ["advisor", "parts"].forEach(function (g) { Object.keys(e[g]).forEach(function (k) { if (e[g][k] !== body[g][k]) { extra[g] = extra[g] || {}; extra[g][k] = e[g][k]; } }); });
+        let enq = d.enquiry;
+        if (Object.keys(extra).length) { try { enq = (await api("PATCH", "/api/enquiries/" + encodeURIComponent(enq.id), extra)).enquiry; } catch (err2) { toast(err2.message, true); } }
+        S.drafts = S.drafts.filter(function (x) { return x !== e; });
+        S.enquiries.push(enq); S.counts.open++;
+        const keep = keepFocus();
+        const old = $('#sheetBody tr[data-id="' + e.id + '"]');
+        const fresh = rowFor(enq, old && old.querySelector(".rownum") ? old.querySelector(".rownum").textContent : "");
+        if (old) { old._replacing = true; old.replaceWith(fresh); } else fillSheet();
+        if (keep && keep.id === e.id) restoreFocus(keep, enq.id);
+        $("#sheetMeta").textContent = S.enquiries.length + " rows · " + S.counts.open + " open, " + S.counts.closed + " closed";
+        toast("Saved " + enq.ref + " – " + enq.customer.name);
+      } catch (err) { e.saving = false; toast(err.message, true); }
+      return;
+    }
+    const before = JSON.stringify(e);
+    setPath(e, key, val); // optimistic – later edits compare against the value we just sent
+    try {
+      const d = await api("PATCH", "/api/enquiries/" + encodeURIComponent(e.id), bodyFor(e, key, val));
+      Object.assign(e, d.enquiry);
+      if (key === "status") { S.counts = { open: S.enquiries.filter(function (x) { return x.status === "open"; }).length, closed: S.counts.open + S.counts.closed - S.enquiries.filter(function (x) { return x.status === "open"; }).length }; if (S.filter.status !== "all" && e.status !== S.filter.status) { toast(e.ref + " moved to " + (e.status === "closed" ? "Closed" : "Open")); loadEnquiries(); return; } }
+      if (key === "advisor.contactRequired" && val) toast("Alert emailed to " + S.config.advisorsEmail);
+      if (key === "parts.quoteRequired" && val) toast("Alert emailed to " + S.config.partsEmail);
+      refreshRow(e);
+    } catch (err) {
+      toast(err.message, true);
+      Object.assign(e, JSON.parse(before));
+      refreshRow(e);
+    }
+  }
+  function addRow(focusField) {
+    const d = newDraft();
+    S.drafts.push(d);
+    const body = $("#sheetBody");
+    const emptyRow = body.querySelector(".empty-row"); if (emptyRow) emptyRow.remove();
+    const tr = rowFor(d, body.children.length + 1);
+    body.appendChild(tr);
+    const t = tr.querySelector('[data-field="' + (focusField || "customer.name") + '"]') || tr.querySelector('[data-field="customer.name"]');
+    if (t) { t.focus(); t.scrollIntoView({ block: "nearest" }); }
+  }
+  async function deleteRow(e) {
+    if (e.draft) { S.drafts = S.drafts.filter(function (x) { return x !== e; }); fillSheet(); return; }
+    if (!confirm("Delete row " + e.ref + " (" + e.customer.name + ")? Notes and attachments will be removed too.")) return;
+    try { await api("DELETE", "/api/enquiries/" + encodeURIComponent(e.id)); toast("Deleted " + e.ref); loadEnquiries(); } catch (err) { toast(err.message, true); }
   }
   function userOptions(department, selectedId) {
-    const opts = [el("option", { value: "", text: "— Not allocated —" })];
+    const opts = [el("option", { value: "", text: "—" })];
     S.users.filter(function (u) { return u.status === "active" && (u.department === department || u.role === "admin" || u.id === selectedId); })
       .sort(function (a, b) { return a.name.localeCompare(b.name); })
       .forEach(function (u) { opts.push(el("option", { value: u.id, text: u.name + (u.department !== department ? " (" + u.department + ")" : ""), selected: u.id === selectedId })); });
     if (selectedId && !S.users.some(function (u) { return u.id === selectedId; })) opts.push(el("option", { value: selectedId, text: "(former user)", selected: true }));
     return opts;
   }
-  async function patch(e, body, okMsg) {
-    try { const d = await api("PATCH", "/api/enquiries/" + encodeURIComponent(e.id), body); Object.assign(e, d.enquiry); renderBoard(); if (okMsg) toast(okMsg); }
-    catch (err) { toast(err.message, true); loadEnquiries(); }
+  async function focusRow(id) {
+    let e = S.enquiries.find(function (x) { return x.id === id; });
+    if (!e) {
+      try { const d = await api("GET", "/api/enquiries/" + encodeURIComponent(id)); if (d.enquiry.status !== S.filter.status && S.filter.status !== "all") { S.filter.status = "all"; $$("#statusSeg button").forEach(function (b) { b.classList.toggle("is-active", b.getAttribute("data-status") === "all"); }); await loadEnquiries(); } }
+      catch (err) { toast("That enquiry no longer exists.", true); return; }
+      e = S.enquiries.find(function (x) { return x.id === id; });
+      if (!e) return;
+    }
+    const tr = $('#sheetBody tr[data-id="' + id + '"]');
+    if (!tr) return;
+    tr.scrollIntoView({ block: "center" });
+    tr.classList.add("is-highlight");
+    setTimeout(function () { tr.classList.remove("is-highlight"); }, 2500);
+    const t = tr.querySelector('[data-field="customer.name"]'); if (t) t.focus();
   }
-  function taskCell(e, dept) {
-    const t = dept === "service" ? e.advisor : e.parts;
-    const flagKey = dept === "service" ? "contactRequired" : "quoteRequired";
-    const wrap = el("div", { class: "task" });
-    wrap.appendChild(el("select", { "aria-label": (dept === "service" ? "Service advisor" : "Parts person") + " for " + e.customer.name, onchange: function (ev) { const b = {}; b[dept === "service" ? "advisor" : "parts"] = { userId: ev.target.value || null }; patch(e, b); } }, userOptions(dept, t.userId)));
-    const flag = el("label", { class: "check flag" }, [el("input", { type: "checkbox", checked: t[flagKey], onchange: function (ev) { const b = {}; b[dept === "service" ? "advisor" : "parts"] = {}; b[dept === "service" ? "advisor" : "parts"][flagKey] = ev.target.checked; patch(e, b, ev.target.checked ? (dept === "service" ? "Alert emailed to " + S.config.advisorsEmail : "Alert emailed to " + S.config.partsEmail) : null); } }),
-      el("span", { text: dept === "service" ? "Contact customer" : "Quote required" })]);
-    wrap.appendChild(flag);
-    const done = el("label", { class: "check" }, [el("input", { type: "checkbox", checked: t.done, onchange: function (ev) { const b = {}; b[dept === "service" ? "advisor" : "parts"] = { done: ev.target.checked }; patch(e, b); } }),
-      el("span", null, [t.done ? el("span", { class: "pill pill--good" }, [el("span", { class: "pill__icon", text: "✓" }), "Done"]) : "Mark done"])]);
-    wrap.appendChild(done);
-    if (t.done && t.doneByName) wrap.appendChild(el("span", { class: "who", text: "by " + t.doneByName + " · " + fmtWhen(t.doneAt) }));
-    return wrap;
+  function exportCsv() {
+    const rows = visibleRows().filter(function (e) { return !e.draft; });
+    const head = ["Ref", "Logged", "Logged by", "Name", "Registration", "Contact number", "Email address", "Preferred method", "Enquiry", "Service advisor", "Contact customer", "Advisor done", "Parts allocated to", "Quote required", "Parts done", "Status", "Attachments", "Notes"];
+    const q = function (v) { v = v == null ? "" : String(v); return /[",\n]/.test(v) ? '"' + v.replace(/"/g, '""') + '"' : v; };
+    const lines = [head.join(",")].concat(rows.map(function (e) {
+      return [e.ref, e.createdAt ? new Date(e.createdAt).toLocaleString("en-AU") : "", e.createdByName, e.customer.name, e.customer.registration, e.customer.phone, e.customer.email, preferredLabel(e.customer.preferred), e.enquiry,
+        userName(e.advisor.userId), e.advisor.contactRequired ? "Yes" : "", e.advisor.done ? "Yes" : "", userName(e.parts.userId), e.parts.quoteRequired ? "Yes" : "", e.parts.done ? "Yes" : "", e.status,
+        e.attachments.map(function (a) { return a.name; }).join("; "), e.notes.map(function (n) { return fmtWhen(n.createdAt) + " " + n.spokeWith + ": " + n.text; }).join(" | ")].map(q).join(",");
+    }));
+    const blob = new Blob(["﻿" + lines.join("\r\n")], { type: "text/csv;charset=utf-8" });
+    const a = el("a", { href: URL.createObjectURL(blob), download: "enquiries-" + new Date().toISOString().slice(0, 10) + ".csv" });
+    document.body.appendChild(a); a.click(); a.remove();
   }
-  function rowFor(e) {
-    const complete = isComplete(e);
-    const tr = el("tr", { class: (complete && e.status === "open" ? "is-complete " : "") + (e.status === "closed" ? "is-closed" : ""), "data-id": e.id });
-    tr.appendChild(el("td", null, [
-      el("div", { class: "ref", text: e.ref + " · " + fmtWhen(e.createdAt) + " · " + (e.createdByName || "") }),
-      el("div", { class: "cust", text: e.customer.name }),
-      e.customer.registration ? el("span", { class: "rego", text: e.customer.registration }) : null
-    ]));
-    tr.appendChild(el("td", null, [el("div", { class: "contact" }, [
-      e.customer.phone ? el("a", { href: "tel:" + e.customer.phone.replace(/\s+/g, ""), text: e.customer.phone }) : el("span", { class: "muted", text: "No number" }),
-      e.customer.email ? el("a", { href: "mailto:" + e.customer.email, text: e.customer.email }) : null,
-      el("span", { class: "pill pill--none" }, [el("span", { class: "pill__icon", text: e.customer.preferred === "call" ? "☎" : e.customer.preferred === "text" ? "✉" : "@" }), "Prefers " + preferredLabel(e.customer.preferred).toLowerCase()])
-    ])]));
-    tr.appendChild(el("td", null, [el("div", { class: "summary", text: e.enquiry || "—" })]));
-    tr.appendChild(el("td", null, [taskCell(e, "service")]));
-    tr.appendChild(el("td", null, [taskCell(e, "parts")]));
-    tr.appendChild(el("td", { class: "icons" }, [
-      el("button", { class: "iconbtn iconbtn--file" + (e.attachments.length ? " has-items" : ""), type: "button", title: "Parts quotes (PDF)", "aria-label": "Attachments for " + e.customer.name, onclick: function () { openFiles(e); } }, [svg(ICON_CLIP), el("span", { class: "count", text: String(e.attachments.length) })]),
-      el("button", { class: "iconbtn iconbtn--note", type: "button", title: "Notes", "aria-label": "Notes for " + e.customer.name, onclick: function () { openNotes(e); } }, [svg(ICON_NOTE), el("span", { class: "count", text: String(e.notes.length) })])
-    ]));
-    tr.appendChild(el("td", null, [el("div", { class: "when" }, [el("strong", { text: fmtWhen(e.updatedAt) }), e.updatedByName || ""])]));
-    const canDelete = S.user.role === "admin" || e.createdBy === S.user.id;
-    tr.appendChild(el("td", { class: "actions" }, [
-      el("div", { class: "btn-row" }, [
-        el("button", { class: "btn", type: "button", text: "Edit", onclick: function () { openEnquiryDialog(e); } }),
-        e.status === "open"
-          ? el("button", { class: "btn" + (complete ? " btn--primary" : ""), type: "button", text: "Close", onclick: function () { patch(e, { status: "closed" }, "Enquiry " + e.ref + " closed"); } })
-          : el("button", { class: "btn", type: "button", text: "Reopen", onclick: function () { patch(e, { status: "open" }); } }),
-        canDelete ? el("button", { class: "btn btn--link btn--danger", type: "button", text: "Delete", onclick: async function () {
-          if (!confirm("Delete enquiry " + e.ref + " for " + e.customer.name + "? Notes and attachments will be removed.")) return;
-          try { await api("DELETE", "/api/enquiries/" + encodeURIComponent(e.id)); toast("Deleted"); loadEnquiries(); } catch (err) { toast(err.message, true); }
-        } }) : null
-      ])
-    ]));
-    return tr;
-  }
-
-  // ---- enquiry dialog -------------------------------------------------------------
-  function fillAllocationSelects(form) {
-    const a = form.advisorUserId.value, p = form.partsUserId.value;
-    clear(form.advisorUserId); userOptions("service", a).forEach(function (o) { form.advisorUserId.appendChild(o); });
-    clear(form.partsUserId); userOptions("parts", p).forEach(function (o) { form.partsUserId.appendChild(o); });
-  }
-  function openEnquiryDialog(e) {
-    const d = $("#enquiryDialog"), f = $("#enquiryForm");
-    S.openEnquiryId = e ? e.id : null;
-    $("#enquiryTitle").textContent = e ? "Edit enquiry " + e.ref : "New enquiry";
-    $("#enquiryStatus").textContent = "";
-    f.reset();
-    fillAllocationSelects(f);
-    if (e) {
-      f.name.value = e.customer.name; f.registration.value = e.customer.registration || ""; f.phone.value = e.customer.phone || ""; f.email.value = e.customer.email || "";
-      f.preferred.value = e.customer.preferred || "call"; f.enquiry.value = e.enquiry || "";
-      f.advisorUserId.value = e.advisor.userId || ""; f.contactRequired.checked = !!e.advisor.contactRequired; f.advisorDone.checked = !!e.advisor.done;
-      f.partsUserId.value = e.parts.userId || ""; f.quoteRequired.checked = !!e.parts.quoteRequired; f.partsDone.checked = !!e.parts.done;
-    } else if (S.user.department === "service") { f.advisorUserId.value = S.user.id; }
-    if (!d.open) d.showModal();
-    f.name.focus();
-  }
-  $("#enquiryForm").addEventListener("submit", async function (ev) {
-    ev.preventDefault();
-    const f = ev.target, st = $("#enquiryStatus");
-    if (!f.name.value.trim()) { st.className = "dialog__status is-error"; st.textContent = "Customer name is required."; f.name.focus(); return; }
-    const body = {
-      customer: { name: f.name.value, registration: f.registration.value, phone: f.phone.value, email: f.email.value, preferred: f.preferred.value },
-      enquiry: f.enquiry.value,
-      advisor: { userId: f.advisorUserId.value || null, contactRequired: f.contactRequired.checked, done: f.advisorDone.checked },
-      parts: { userId: f.partsUserId.value || null, quoteRequired: f.quoteRequired.checked, done: f.partsDone.checked }
-    };
-    st.className = "dialog__status"; st.textContent = "Saving…"; $("#btnSaveEnquiry").disabled = true;
-    try {
-      const d = S.openEnquiryId ? await api("PATCH", "/api/enquiries/" + encodeURIComponent(S.openEnquiryId), body) : await api("POST", "/api/enquiries", body);
-      $("#enquiryDialog").close();
-      toast((S.openEnquiryId ? "Saved " : "Logged ") + d.enquiry.ref);
-      if (currentRoute().path.startsWith("/enquiry/")) location.hash = "/";
-      loadEnquiries();
-    } catch (err) { st.className = "dialog__status is-error"; st.textContent = err.message; }
-    finally { $("#btnSaveEnquiry").disabled = false; }
-  });
-  $("#enquiryDialog").addEventListener("close", function () { S.openEnquiryId = null; if (currentRoute().path.startsWith("/enquiry/")) location.hash = "/"; });
 
   // ---- notes dialog ------------------------------------------------------------------
   function openNotes(e) {
@@ -486,7 +633,7 @@
           el("span", null, [el("strong", { text: n.spokeWith }), " spoke to the customer · logged by " + n.authorName]),
           el("span", null, [fmtWhen(n.createdAt), canDel ? el("button", { class: "note__del", type: "button", title: "Delete note", "aria-label": "Delete note", text: "✕", onclick: async function () {
             if (!confirm("Delete this note?")) return;
-            try { const d = await api("DELETE", "/api/enquiries/" + encodeURIComponent(e.id) + "/notes/" + encodeURIComponent(n.id)); Object.assign(e, d.enquiry); fillNotes(e); renderBoard(); } catch (err) { toast(err.message, true); }
+            try { const d = await api("DELETE", "/api/enquiries/" + encodeURIComponent(e.id) + "/notes/" + encodeURIComponent(n.id)); Object.assign(e, d.enquiry); fillNotes(e); refreshRow(e); } catch (err) { toast(err.message, true); }
           } }) : null])
         ])
       ]));
@@ -501,7 +648,7 @@
     st.className = "dialog__status"; st.textContent = "Saving…";
     try {
       const d = await api("POST", "/api/enquiries/" + encodeURIComponent(e.id) + "/notes", { text: f.text.value, spokeWith: f.spokeWith.value });
-      Object.assign(e, d.enquiry); f.text.value = ""; st.textContent = ""; fillNotes(e); renderBoard();
+      Object.assign(e, d.enquiry); f.text.value = ""; st.textContent = ""; fillNotes(e); refreshRow(e);
     } catch (err) { st.className = "dialog__status is-error"; st.textContent = err.message; }
   });
   $("#notesDialog").addEventListener("close", function () { S.notesFor = null; });
@@ -527,7 +674,7 @@
         el("a", { class: "btn btn--small", href: base + "?download=1", text: "Download" }),
         canDel ? el("button", { class: "btn btn--small btn--danger", type: "button", text: "Remove", onclick: async function () {
           if (!confirm("Remove " + a.name + "?")) return;
-          try { const d = await api("DELETE", base); Object.assign(e, d.enquiry); fillFiles(e); renderBoard(); } catch (err) { toast(err.message, true); }
+          try { const d = await api("DELETE", base); Object.assign(e, d.enquiry); fillFiles(e); refreshRow(e); } catch (err) { toast(err.message, true); }
         } }) : null
       ]));
     });
@@ -542,7 +689,7 @@
       st.textContent = "Uploading " + file.name + "…";
       try {
         const d = await api("POST", "/api/enquiries/" + encodeURIComponent(e.id) + "/attachments?filename=" + encodeURIComponent(file.name), file, true);
-        Object.assign(e, d.enquiry); fillFiles(e); renderBoard(); toast("Attached " + file.name);
+        Object.assign(e, d.enquiry); fillFiles(e); refreshRow(e); toast("Attached " + file.name);
       } catch (err) { toast(err.message, true); }
     }
     st.textContent = fileHint();
@@ -658,7 +805,7 @@
   });
 
   // ---- header wiring ---------------------------------------------------------------------------------
-  $("#btnNew").addEventListener("click", function () { openEnquiryDialog(null); });
+  $("#btnNew").addEventListener("click", function () { if (currentRoute().path !== "/") { navigate("/"); } addRow(); });
   $("#btnUser").addEventListener("click", function (ev) { ev.stopPropagation(); const p = $("#userPanel"); p.hidden = !p.hidden; $("#btnUser").setAttribute("aria-expanded", String(!p.hidden)); });
   document.addEventListener("click", function () { $("#userPanel").hidden = true; });
   $("#userPanel").addEventListener("click", function (ev) { ev.stopPropagation(); });

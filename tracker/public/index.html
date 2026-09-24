@@ -14,12 +14,12 @@
     <div class="brand">
       <img class="brand__logo brand__logo--wide" src="/assets/preston-mazda-logo.svg" alt="Preston Mazda">
       <div class="brand__titles">
-        <h1 class="brand__title">Customer Enquiry Tracker</h1>
+        <h1 class="brand__title">Customer Enquiry Log</h1>
         <p class="brand__subtitle" id="dealerName">Preston Mazda · Service Department</p>
       </div>
     </div>
     <div class="topbar__controls" id="topControls" hidden>
-      <button class="btn btn--primary" id="btnNew" type="button">+ New enquiry</button>
+      <button class="btn btn--primary" id="btnNew" type="button">+ New row</button>
       <button class="btn btn--icon btn--bell" id="btnBell" type="button" title="Notifications" aria-label="Notifications">
         <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path fill="currentColor" d="M12 22a2.5 2.5 0 0 0 2.45-2h-4.9A2.5 2.5 0 0 0 12 22zm7-6V11c0-3.3-2.1-6.1-5.2-6.8V3.5a1.8 1.8 0 0 0-3.6 0v.7C7.1 4.9 5 7.7 5 11v5l-2 2v1h18v-1l-2-2z"/></svg>
         <span class="bell__badge" id="bellBadge" hidden>0</span>
@@ -49,51 +49,6 @@
     <span id="footStatus">Data is kept on the dealership network only.</span>
     <span class="foot__actions"><span id="liveStatus" class="live live--off">● Offline</span></span>
   </footer>
-
-  <!-- Enquiry dialog -->
-  <dialog class="dialog" id="enquiryDialog" aria-labelledby="enquiryTitle">
-    <form method="dialog" class="dialog__form" id="enquiryForm" novalidate>
-      <header class="dialog__head">
-        <h2 id="enquiryTitle">New enquiry</h2>
-        <button class="btn btn--icon" type="button" data-close aria-label="Close">✕</button>
-      </header>
-      <div class="form-grid">
-        <label class="field"><span class="field__label">Customer name <em>*</em></span><input type="text" name="name" maxlength="120" required autocomplete="off"></label>
-        <label class="field"><span class="field__label">Registration</span><input type="text" name="registration" maxlength="20" class="upper" autocomplete="off" placeholder="ABC123"></label>
-        <label class="field"><span class="field__label">Contact number</span><input type="tel" name="phone" maxlength="40" autocomplete="off"></label>
-        <label class="field"><span class="field__label">Email address</span><input type="email" name="email" maxlength="200" autocomplete="off"></label>
-        <label class="field"><span class="field__label">Preferred communication method</span>
-          <select name="preferred">
-            <option value="call">Call</option>
-            <option value="text">Text</option>
-            <option value="email">Email</option>
-          </select>
-        </label>
-        <label class="field field--wide"><span class="field__label">Enquiry</span><textarea name="enquiry" rows="3" maxlength="2000" class="plain" placeholder="What the customer is asking about…"></textarea></label>
-
-        <h3 class="form-grid__heading">Service advisor</h3>
-        <label class="field"><span class="field__label">Allocated to</span><select name="advisorUserId"><option value="">— Not allocated —</option></select></label>
-        <div class="field field--checks">
-          <label class="check"><input type="checkbox" name="contactRequired"> <span>Service advisor needs to contact the customer <small>(emails advisors@)</small></span></label>
-          <label class="check"><input type="checkbox" name="advisorDone"> <span>Service advisor task done</span></label>
-        </div>
-
-        <h3 class="form-grid__heading">Parts department</h3>
-        <label class="field"><span class="field__label">Allocated to</span><select name="partsUserId"><option value="">— Not allocated —</option></select></label>
-        <div class="field field--checks">
-          <label class="check"><input type="checkbox" name="quoteRequired"> <span>Parts quote required <small>(emails parts@)</small></span></label>
-          <label class="check"><input type="checkbox" name="partsDone"> <span>Parts task done</span></label>
-        </div>
-      </div>
-      <footer class="dialog__foot">
-        <span class="dialog__status" id="enquiryStatus"></span>
-        <div class="btn-row">
-          <button class="btn" type="button" data-close>Cancel</button>
-          <button class="btn btn--primary" type="submit" id="btnSaveEnquiry">Save enquiry</button>
-        </div>
-      </footer>
-    </form>
-  </dialog>
 
   <!-- Notes dialog -->
   <dialog class="dialog dialog--narrow" id="notesDialog" aria-labelledby="notesTitle">
